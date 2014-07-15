@@ -71,6 +71,8 @@
 #include <linux/signalfd.h>
 #include <linux/uprobes.h>
 #include <linux/aio.h>
+#include <linux/list.h>
+#include <linux/fsnotify_backend.h>
 
 #include <asm/pgtable.h>
 #include <asm/pgalloc.h>
@@ -1121,6 +1123,49 @@ init_task_pid(struct task_struct *task, enum pid_type type, struct pid *pid)
 	 task->pids[type].pid = pid;
 }
 
+static int copy_pnotify(unsigned long clone_flags, struct task_struct * tsk)
+{
+#ifdef CONFIG_PNOTIFY_USER
+	struct fsnotify_mark *mark;
+	struct hlist_node /* *pos, */ *n;
+
+	INIT_HLIST_HEAD(&tsk->pnotify_marks);
+
+	/* TODO: take a closer look at how the pnotify_mask is used, and
+	   whether it is actually doing anything useful. It was modeled
+	   after the inode->mask for inotify, but the two (inode and task
+	   monitoring) are not identical. */
+	tsk->pnotify_mask = current->pnotify_mask;
+
+	/* Copy the list from current to tsk */
+
+	/* TODO: originally I thought task_lock(current) would be appropriate
+	   here, but that deadlocks for some simple test cases. However, the
+	   current->pnotify_marks list is (slightly) exposed here to list
+	   corruption, so consider how this should be locked. */
+
+	/* TODO: cleanup: this does not need to be a _safe list operation: */
+	hlist_for_each_entry_safe(mark, /* pos, */ n, &current->pnotify_marks,
+				  t.t_list) {
+#if 0
+		pnotify_debug(PNOTIFY_DEBUG_LEVEL_VERBOSE,
+			      "%s: parent task %u, "
+			      "new task %u)\n",
+			      __func__, current->pid, tsk->pid);
+#endif
+
+    mutex_lock(&mark->group->mark_mutex);
+    pnotify_new_watch(mark->group, tsk->pid,
+        pnotify_mask_to_arg(mark->mask));
+    mutex_unlock(&mark->group->mark_mutex);
+
+    pnotify_create_process_create_event(tsk, mark, mark->group);
+	}
+
+#endif
+	return 0;
+}
+
 /*
  * This creates a new process as a copy of the old one,
  * but does not actually start it yet.
@@ -1491,6 +1536,9 @@ static struct task_struct *copy_process(unsigned long clone_flags,
 	perf_event_fork(p);
 
 	trace_task_newtask(p, clone_flags);
+
+	if ((retval = copy_pnotify(clone_flags, p)))
+		goto bad_fork_free_pid;
 
 	return p;
 

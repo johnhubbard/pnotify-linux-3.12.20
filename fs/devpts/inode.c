@@ -602,7 +602,7 @@ struct inode *devpts_pty_new(struct inode *ptmx_inode, dev_t device, int index,
 	dentry = d_alloc_name(root, s);
 	if (dentry) {
 		d_add(dentry, inode);
-		fsnotify_create(root->d_inode, dentry);
+		fsnotify_create(root->d_inode, dentry, NULL);
 	} else {
 		iput(inode);
 		inode = ERR_PTR(-ENOMEM);
